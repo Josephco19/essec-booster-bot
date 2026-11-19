@@ -1,0 +1,37 @@
+name: Ouvrir le booster
+
+on:
+  schedule:
+    # Toutes les 5 minutes (le minimum autorisé par GitHub ; en pratique
+    # GitHub lance souvent avec quelques minutes de retard).
+    - cron: "*/5 * * * *"
+    # Une fois par semaine : empêche GitHub de désactiver le workflow
+    # après 60 jours sans activité sur le repo.
+    - cron: "17 3 * * 1"
+  workflow_dispatch: # bouton "Run workflow" pour lancer à la main
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: booster
+  cancel-in-progress: false
+
+jobs:
+  booster:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ouvrir le booster
+        env:
+          ESSEC_COOKIE: ${{ secrets.ESSEC_COOKIE }}
+        run: python3 open_booster.py
+
+      - name: Garder le workflow actif
+        if: github.event.schedule == '17 3 * * 1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/booster.yml/enable"
