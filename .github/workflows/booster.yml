@@ -13,6 +13,7 @@ on:
 permissions:
   actions: write
   contents: read
+  issues: write
 
 concurrency:
   group: booster
@@ -26,9 +27,28 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Ouvrir le booster
+        id: booster
         env:
           ESSEC_COOKIE: ${{ secrets.ESSEC_COOKIE }}
+          # Mail seulement si le booster contient au moins cette rareté :
+          # common (= toujours), rare, epic, legendary
+          NOTIFY_MIN_RARITY: common
         run: python3 open_booster.py
+
+      # GitHub t'envoie par mail chaque commentaire posté sur l'issue
+      # « Boosters ouverts » de ton repo.
+      - name: Envoyer le mail
+        if: steps.booster.outputs.notify == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          num=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+                --search "Boosters ouverts in:title" --json number --jq '.[0].number // empty')
+          if [ -z "$num" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "Boosters ouverts" --body-file message.md
+          else
+            gh issue comment "$num" --repo "$GITHUB_REPOSITORY" --body-file message.md
+          fi
 
       - name: Garder le workflow actif
         if: github.event.schedule == '17 3 * * 1'
