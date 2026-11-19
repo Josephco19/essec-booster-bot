@@ -80,6 +80,74 @@ def parse_result(body):
     return None
 
 
+RARITY_ORDER = ["common", "rare", "epic", "legendary", "creator"]
+RARITY_EMOJI = {"common": "⚪", "rare": "🔵", "epic": "🟣",
+                "legendary": "🟡", "creator": "🌟"}
+
+
+def find_cards(obj):
+    """Renvoie la liste des cartes (dicts avec name + rarity) dans la réponse."""
+    cards = []
+
+    def walk(x):
+        if isinstance(x, dict):
+            if isinstance(x.get("name"), str) and x.get("rarity"):
+                cards.append(x)
+                return
+            for v in x.values():
+                walk(v)
+        elif isinstance(x, list):
+            for v in x:
+                walk(v)
+
+    walk(obj)
+    return cards
+
+
+def local_time(iso):
+    """Convertit l'heure UTC du site en heure de Paris/Rome."""
+    try:
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        return dt.astimezone(ZoneInfo("Europe/Paris")).strftime("%H:%M")
+    except Exception:
+        return iso + " (UTC)"
+
+
+def write_notification(result):
+    """Prépare le message du mail et indique au workflow s'il faut l'envoyer."""
+    out = os.environ.get("GITHUB_OUTPUT")
+    if not out:
+        return
+    cards = find_cards(result)
+    min_rarity = os.environ.get("NOTIFY_MIN_RARITY", "common").strip().lower()
+    min_rank = RARITY_ORDER.index(min_rarity) if min_rarity in RARITY_ORDER else 0
+    best = max((RARITY_ORDER.index(c["rarity"]) for c in cards
+                if c["rarity"] in RARITY_ORDER), default=0)
+    notify = bool(cards) and best >= min_rank
+
+    lines = ["### 🎁 Booster ouvert", ""]
+    for c in cards:
+        labels = c.get("labels") or {}
+        rarity = labels.get("rarity") or c["rarity"]
+        details = " · ".join(x for x in (labels.get("program"), labels.get("classOf"),
+                                         c.get("subtitle")) if x)
+        line = "- %s **%s** (%s)" % (RARITY_EMOJI.get(c["rarity"], "▫️"),
+                                     c["name"], rarity)
+        if details:
+            line += " — " + details
+        if c.get("isNew"):
+            line += " — 🆕 nouvelle"
+        lines.append(line)
+    if result.get("nextAt"):
+        lines += ["", "Prochain booster vers **%s**." % local_time(result["nextAt"])]
+    with open("message.md", "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    with open(out, "a", encoding="utf-8") as f:
+        f.write("notify=%s\n" % ("true" if notify else "false"))
+
+
 def card_names(obj):
     """Essaie d'extraire les noms des cartes obtenues, quelle que soit la forme."""
     names = []
@@ -140,7 +208,8 @@ def main():
         names = card_names(result)
         print("Booster ouvert !" + (" Cartes : " + ", ".join(names) if names else ""))
         if result.get("nextAt"):
-            print("Prochain booster (UTC) : " + str(result["nextAt"]))
+            print("Prochain booster : " + local_time(str(result["nextAt"])))
+        write_notification(result)
     else:
         # Cas normal quand le timer n'est pas encore à zéro.
         print("Pas de booster pour l'instant : %s" % result.get("message", result))
